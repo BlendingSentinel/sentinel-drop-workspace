@@ -71,6 +71,7 @@ func _ready() -> void:
 	register_command("window_mode", _cmd_window_mode, "Changes display mode. Usage: window_mode [windowed/fullscreen/borderless]")
 	register_command("screenshot", _cmd_screenshot, "Captures the screen and saves it as a PNG.")
 	register_command("gc", _cmd_gc, "Runs a low-level memory audit and checks for orphan node leaks.")
+	register_command("ping", _cmd_ping, "Pings the current server, or a specific domain/IP. Usage: ping [optional_url]")
 	
 	log_text("[color=cyan]SentinelDrop Terminal Initialized. Type 'help' for commands.[/color]")
 
@@ -363,10 +364,21 @@ func _cmd_engine_info(_args: Array) -> void:
 	var adapter_name = RenderingServer.get_video_adapter_name()
 	var adapter_vendor = RenderingServer.get_video_adapter_vendor()
 	
+	# Determine Build/Export Profile
+	var build_profile: String = "Production Release Build"
+	var profile_color: String = "green"
+	
+	if OS.has_feature("editor"):
+		build_profile = "Debug Mode (Running inside Editor)"
+		profile_color = "yellow"
+	elif OS.has_feature("debug"):
+		build_profile = "Exported Debug Build"
+		profile_color = "orange"
+	
 	# Graphics Pipeline and Backend Diagnostics
-	var render_method = RenderingServer.get_current_rendering_method().capitalize() # e.g. "Forward Plus" or "Gl Compatibility"
-	var render_driver = RenderingServer.get_current_rendering_driver_name().to_upper() # e.g. "VULKAN" or "OPENGL3"
-	var api_version = RenderingServer.get_video_adapter_api_version() # Specific API implementation version string
+	var render_method = RenderingServer.get_current_rendering_method().capitalize()
+	var render_driver = RenderingServer.get_current_rendering_driver_name().to_upper()
+	var api_version = RenderingServer.get_video_adapter_api_version()
 	
 	# Calculate Engine Uptime
 	var total_msec: int = Time.get_ticks_msec()
@@ -376,14 +388,16 @@ func _cmd_engine_info(_args: Array) -> void:
 	var hours: int = total_seconds / 3600
 	var uptime_str: String = "%02d:%02d:%02d" % [hours, minutes, seconds]
 	
-	# Diagnostic Display
+	# Clean Scannable Diagnostic Display
 	log_text("[color=yellow]--- SentinelDrop Advanced System Summary ---[/color]")
 	log_text("Engine Version:   [color=cyan]%s[/color]" % version_str)
+	log_text("Build Profile:    [color=%s]%s[/color]" % [profile_color, build_profile])
 	log_text("Operating System: [color=cyan]%s[/color]" % os_name)
 	log_text("Graphics Card:    [color=cyan]%s (%s)[/color]" % [adapter_name, adapter_vendor])
 	log_text("Render Profile:   [color=magenta]%s[/color]" % render_method)
 	log_text("Graphics Backend: [color=magenta]%s (v%s)[/color]" % [render_driver, api_version])
 	log_text("Engine Uptime:    [color=green]%s[/color] (including load cycles)" % uptime_str)
+	
 
 func _cmd_shutdown(_args: Array) -> void:
 	log_text("[color=red]Shutting down game client...[/color]")
@@ -487,3 +501,51 @@ func _cmd_gc(_args: Array) -> void:
 		log_text("[color=orange]Orphan Nodes:    %d[/color] [color=red]<- ALERT: Nodes leaking outside the Scene Tree![/color]" % orphan_nodes)
 	else:
 		log_text("Orphan Nodes:    [color=green]0[/color] (Clean teardowns)")
+
+func _cmd_ping(args: Array) -> void:
+	# BEHAVIOR 1: Ping current game server
+	if args.is_empty():
+		log_text("Checking connectivity to game server...")
+		
+		# Hook into Godot's high-level multiplayer API if active
+		if multiplayer.multiplayer_peer and multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+			# Note: Actual RTT tracking depends on your network setup (e.g., ENetPacketPeer provides peer.get_statistic())
+			log_text("Connected to server. Peer ID: [color=cyan]%d[/color]" % multiplayer.get_unique_id())
+		else:
+			log_text("[color=yellow]No active multiplayer server connection detected.[/color]")
+		return
+
+	# BEHAVIOR 2: Ping a specific domain or IP address
+	var target_url = args[0]
+	if not target_url.begins_with("http://") and not target_url.begins_with("https://"):
+		target_url = "https://" + target_url
+		
+	log_text("Pinging address [color=cyan]%s[/color]..." % target_url)
+	
+	# Create a temporary HTTPRequest node dynamically
+	var http_request = HTTPRequest.new()
+	add_child(http_request)
+	
+	# Track the exact hardware millisecond tick when the request leaves
+	var start_time = Time.get_ticks_msec()
+	
+	# Define an inline lambda function to handle the response asynchronously
+	var on_completed = func(result, response_code, _headers, _body):
+		var duration = Time.get_ticks_msec() - start_time
+		
+		if result == HTTPRequest.RESULT_SUCCESS:
+			log_text("Reply from %s: bytes=~32 [color=green]time=%dms[/color] Status=%d" % [args[0], duration, response_code])
+		else:
+			log_text("[color=red]Ping request failed. Destination host unreachable or timed out.[/color]")
+			
+		# Clean up the temporary node immediately so we don't leak memory
+		http_request.queue_free()
+		
+	# Connect our lambda listener to the request completion signal
+	http_request.request_completed.connect(on_completed)
+	
+	# Send out the web request
+	var err = http_request.request(target_url)
+	if err != OK:
+		log_text("[color=red]Failed to initialize network connection socket.[/color]")
+		http_request.queue_free()
