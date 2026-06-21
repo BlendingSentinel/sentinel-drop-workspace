@@ -26,6 +26,7 @@ var command_history: Array[String] = []
 var history_index: int = -1
 var input_draft: String = ""
 var is_wireframe: bool = false
+var is_noclip_active: bool = false
 
 # Dragging states
 var is_dragging: bool = false
@@ -66,6 +67,10 @@ func _ready() -> void:
 	register_command("wireframe", _cmd_wireframe, "Toggles wireframe overlay mode for 3D/2D debugging.")
 	register_command("engine_info", _cmd_engine_info, "Prints engine version, OS, and hardware diagnostics.")
 	register_command("shutdown", _cmd_shutdown, "Instantly closes the game client.")
+	register_command("noclip", _cmd_noclip, "Toggles noclip mode, allowing you to fly through solid objects.")
+	register_command("window_mode", _cmd_window_mode, "Changes display mode. Usage: window_mode [windowed/fullscreen/borderless]")
+	register_command("screenshot", _cmd_screenshot, "Captures the screen and saves it as a PNG.")
+	register_command("gc", _cmd_gc, "Runs a low-level memory audit and checks for orphan node leaks.")
 	
 	log_text("[color=cyan]SentinelDrop Terminal Initialized. Type 'help' for commands.[/color]")
 
@@ -358,12 +363,12 @@ func _cmd_engine_info(_args: Array) -> void:
 	var adapter_name = RenderingServer.get_video_adapter_name()
 	var adapter_vendor = RenderingServer.get_video_adapter_vendor()
 	
-	# Graphics Pipeline & Backend Backend Diagnostics
+	# Graphics Pipeline and Backend Diagnostics
 	var render_method = RenderingServer.get_current_rendering_method().capitalize() # e.g. "Forward Plus" or "Gl Compatibility"
 	var render_driver = RenderingServer.get_current_rendering_driver_name().to_upper() # e.g. "VULKAN" or "OPENGL3"
 	var api_version = RenderingServer.get_video_adapter_api_version() # Specific API implementation version string
 	
-	# Calculate Engine Uptime (Converts ms into HH:MM:SS formatting)
+	# Calculate Engine Uptime
 	var total_msec: int = Time.get_ticks_msec()
 	var total_seconds: int = total_msec / 1000
 	var seconds: int = total_seconds % 60
@@ -371,7 +376,7 @@ func _cmd_engine_info(_args: Array) -> void:
 	var hours: int = total_seconds / 3600
 	var uptime_str: String = "%02d:%02d:%02d" % [hours, minutes, seconds]
 	
-	# Clean Scannable Diagnostic Display
+	# Diagnostic Display
 	log_text("[color=yellow]--- SentinelDrop Advanced System Summary ---[/color]")
 	log_text("Engine Version:   [color=cyan]%s[/color]" % version_str)
 	log_text("Operating System: [color=cyan]%s[/color]" % os_name)
@@ -387,3 +392,98 @@ func _cmd_shutdown(_args: Array) -> void:
 	await get_tree().process_frame
 	
 	get_tree().quit()
+
+func _cmd_noclip(_args: Array) -> void:
+	is_noclip_active = !is_noclip_active
+	
+	var status = "[color=green]ENABLED[/color]" if is_noclip_active else "[color=red]DISABLED[/color]"
+	log_text("Noclip mode is now %s." % status)
+
+func _cmd_window_mode(args: Array) -> void:
+	if args.is_empty():
+		# If no argument is provided, read back the current engine state
+		var current_mode = DisplayServer.window_get_mode()
+		var mode_name = "Unknown"
+		match current_mode:
+			DisplayServer.WINDOW_MODE_WINDOWED: mode_name = "Windowed"
+			DisplayServer.WINDOW_MODE_FULLSCREEN: mode_name = "Borderless Fullscreen"
+			DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN: mode_name = "Exclusive Fullscreen"
+			DisplayServer.WINDOW_MODE_MAXIMIZED: mode_name = "Maximized"
+			DisplayServer.WINDOW_MODE_MINIMIZED: mode_name = "Minimized"
+			
+		log_text("Current window mode: [color=yellow]%s[/color]" % mode_name)
+		return
+		
+	var requested_mode = args[0].to_lower()
+	match requested_mode:
+		"windowed", "window":
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+			log_text("Window mode set to: [color=green]Windowed[/color]")
+		"fullscreen":
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+			log_text("Window mode set to: [color=green]Exclusive Fullscreen[/color]")
+		"borderless":
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+			log_text("Window mode set to: [color=green]Borderless Fullscreen[/color]")
+		_:
+			log_text("[color=red]Invalid mode. Use 'windowed', 'fullscreen', or 'borderless'.[/color]")
+
+func _cmd_screenshot(_args: Array) -> void:
+	log_text("[color=yellow]Processing screenshot...[/color]")
+	
+	# Wait for the current rendering frame to finish drawing completely to avoid graphical tearing
+	await RenderingServer.frame_post_draw
+	
+	# 1. Grab the raw image data from the root viewport
+	var image = get_viewport().get_texture().get_image()
+	
+	# 2. Ensure the "screenshots" directory exists inside the local user folder
+	var dir = DirAccess.open("user://")
+	if not dir.dir_exists("screenshots"):
+		dir.make_dir("screenshots")
+		
+	# 3. Generate a clean, time-stamped filename
+	var time = Time.get_datetime_dict_from_system()
+	var filename = "screenshot_%04d-%02d-%02d_%02d-%02d-%02d.png" % [
+		time.year, time.month, time.day,
+		time.hour, time.minute, time.second
+	]
+	
+	var local_path = "user://screenshots/" + filename
+	
+	# 4. Save the image to the drive
+	var error = image.save_png(local_path)
+	
+	if error == OK:
+		# Convert the user:// path into OS path (C:/Users/ AppData/ /.local/share etc)
+		var absolute_path = ProjectSettings.globalize_path(local_path)
+		log_text("Screenshot saved successfully to:")
+		log_text("[color=cyan]%s[/color]" % absolute_path)
+	else:
+		log_text("[color=red]Failed to save screenshot. Error code: %d[/color]" % error)
+
+func _cmd_gc(_args: Array) -> void:
+	log_text("[color=yellow]Analyzing active engine allocations...[/color]")
+	
+	# Gather raw memory data from the Performance API
+	var static_mem_bytes = Performance.get_monitor(Performance.MEMORY_STATIC)
+	var static_mem_mb = static_mem_bytes / 1024.0 / 1024.0
+	
+	# Gather allocation counts
+	var total_objects = int(Performance.get_monitor(Performance.OBJECT_COUNT))
+	var active_resources = int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT))
+	var active_nodes = int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))
+	var orphan_nodes = int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))
+	
+	# Print a clean, formatted telemetry display
+	log_text("[color=yellow]--- SentinelDrop Memory Diagnostic ---[/color]")
+	log_text("Static Memory:   [color=cyan]%.2f MB[/color] (%d bytes)" % [static_mem_mb, static_mem_bytes])
+	log_text("Total Objects:   [color=cyan]%d[/color] (Instances, Objects, Structs)" % total_objects)
+	log_text("Active Nodes:    [color=cyan]%d[/color] (Inside active scene tree)" % active_nodes)
+	log_text("Loaded Resources:[color=cyan]%d[/color] (Textures, Materials, Scripts)" % active_resources)
+	
+	# Highlight Orphan Nodes aggressively if any leak is detected
+	if orphan_nodes > 0:
+		log_text("[color=orange]Orphan Nodes:    %d[/color] [color=red]<- ALERT: Nodes leaking outside the Scene Tree![/color]" % orphan_nodes)
+	else:
+		log_text("Orphan Nodes:    [color=green]0[/color] (Clean teardowns)")
