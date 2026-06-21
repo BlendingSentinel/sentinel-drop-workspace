@@ -25,6 +25,7 @@ var command_registry: Dictionary = {}
 var command_history: Array[String] = []
 var history_index: int = -1
 var input_draft: String = ""
+var is_wireframe: bool = false
 
 # Dragging states
 var is_dragging: bool = false
@@ -60,6 +61,11 @@ func _ready() -> void:
 	register_command("bloom", _cmd_bloom, "Toggles environment bloom. Usage: bloom on/off")
 	register_command("fov", _cmd_fov, "Sets the active 3D camera Field of View. Usage: fov [value]")
 	register_command("fps", _cmd_fps, "Prints the current frames per second.")
+	register_command("reload", _cmd_reload, "Reloads the currently active scene.")
+	register_command("vsync", _cmd_vsync, "Toggles vertical synchronization. Usage: vsync on/off")
+	register_command("wireframe", _cmd_wireframe, "Toggles wireframe overlay mode for 3D/2D debugging.")
+	register_command("engine_info", _cmd_engine_info, "Prints engine version, OS, and hardware diagnostics.")
+	register_command("shutdown", _cmd_shutdown, "Instantly closes the game client.")
 	
 	log_text("[color=cyan]SentinelDrop Terminal Initialized. Type 'help' for commands.[/color]")
 
@@ -113,7 +119,16 @@ func _apply_history_to_input() -> void:
 	command_input.caret_column = target_text.length()
 
 func _on_focus_exited() -> void:
+	#If we are already exiting the tree, don't bother awaiting
+	if not is_inside_tree() or get_tree() == null:
+		return
+		
 	await get_tree().process_frame
+	
+	#If the scene reloaded during the frame wait, abort safely
+	if not is_inside_tree() or get_viewport() == null:
+		return
+		
 	var current_focus = get_viewport().gui_get_focus_owner()
 	print("Focus lost! New focus owner: ", current_focus)
 
@@ -216,8 +231,16 @@ func _on_command_submitted(text: String) -> void:
 	_force_focus_loop()
 
 func _force_focus_loop() -> void:
+	# SAFETY CHECK: If the scene reloaded or changed, this node is no longer in the tree.
+	# Exit early to prevent null instance crashes.
+	if not is_inside_tree() or get_tree() == null:
+		return
+		
 	await get_tree().process_frame
-	command_input.grab_focus()
+	
+	# Double check again after the frame pass to make sure we didn't exit during the wait
+	if is_inside_tree() and command_input:
+		command_input.grab_focus()
 
 func log_text(text: String) -> void:
 	history_log.append_text(text + "\n")
@@ -293,3 +316,74 @@ func _cmd_fps(args: Array) -> void:
 			log_text("FPS locked to %d." % target_fps)
 	else:
 		log_text("[color=yellow]Usage: fps OR fps set [number] (use 0 to uncap)[/color]")
+
+func _cmd_reload(_args: Array) -> void:
+	log_text("[color=yellow]Reloading current scene...[/color]")
+	# Flashes the screen clear right before reloading so the transition feels immediate
+	history_log.clear() 
+	get_tree().reload_current_scene()
+
+func _cmd_vsync(args: Array) -> void:
+	if args.is_empty():
+		var current_mode = DisplayServer.window_get_vsync_mode()
+		var mode_str = "ON" if current_mode == DisplayServer.VSYNC_ENABLED else "OFF"
+		log_text("VSync is currently: [color=yellow]%s[/color]" % mode_str)
+		return
+		
+	var switch = args[0].to_lower()
+	if switch in ["on", "1", "true"]:
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_ENABLED)
+		log_text("VSync enabled.")
+	elif switch in ["off", "0", "false"]:
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+		log_text("VSync disabled (Uncapped / Fast).")
+	else:
+		log_text("[color=red]Invalid argument. Use 'on' or 'off'.[/color]")
+
+func _cmd_wireframe(_args: Array) -> void:
+	is_wireframe = !is_wireframe
+	var vp_rid = get_viewport().get_viewport_rid()
+	
+	if is_wireframe:
+		RenderingServer.viewport_set_debug_draw(vp_rid, RenderingServer.VIEWPORT_DEBUG_DRAW_WIREFRAME)
+		log_text("Rendering mode set to [color=magenta]WIREFRAME[/color].")
+	else:
+		RenderingServer.viewport_set_debug_draw(vp_rid, RenderingServer.VIEWPORT_DEBUG_DRAW_DISABLED)
+		log_text("Rendering mode restored to [color=green]NORMAL[/color].")
+
+func _cmd_engine_info(_args: Array) -> void:
+	# Core Hardware & Platform Info
+	var version_str = Engine.get_version_info()["string"]
+	var os_name = OS.get_name()
+	var adapter_name = RenderingServer.get_video_adapter_name()
+	var adapter_vendor = RenderingServer.get_video_adapter_vendor()
+	
+	# Graphics Pipeline & Backend Backend Diagnostics
+	var render_method = RenderingServer.get_current_rendering_method().capitalize() # e.g. "Forward Plus" or "Gl Compatibility"
+	var render_driver = RenderingServer.get_current_rendering_driver_name().to_upper() # e.g. "VULKAN" or "OPENGL3"
+	var api_version = RenderingServer.get_video_adapter_api_version() # Specific API implementation version string
+	
+	# Calculate Engine Uptime (Converts ms into HH:MM:SS formatting)
+	var total_msec: int = Time.get_ticks_msec()
+	var total_seconds: int = total_msec / 1000
+	var seconds: int = total_seconds % 60
+	var minutes: int = (total_seconds / 60) % 60
+	var hours: int = total_seconds / 3600
+	var uptime_str: String = "%02d:%02d:%02d" % [hours, minutes, seconds]
+	
+	# Clean Scannable Diagnostic Display
+	log_text("[color=yellow]--- SentinelDrop Advanced System Summary ---[/color]")
+	log_text("Engine Version:   [color=cyan]%s[/color]" % version_str)
+	log_text("Operating System: [color=cyan]%s[/color]" % os_name)
+	log_text("Graphics Card:    [color=cyan]%s (%s)[/color]" % [adapter_name, adapter_vendor])
+	log_text("Render Profile:   [color=magenta]%s[/color]" % render_method)
+	log_text("Graphics Backend: [color=magenta]%s (v%s)[/color]" % [render_driver, api_version])
+	log_text("Engine Uptime:    [color=green]%s[/color] (including load cycles)" % uptime_str)
+
+func _cmd_shutdown(_args: Array) -> void:
+	log_text("[color=red]Shutting down game client...[/color]")
+	
+	# Give the engine a microsecond to process the log text render before killing the process
+	await get_tree().process_frame
+	
+	get_tree().quit()
