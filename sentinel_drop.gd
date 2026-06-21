@@ -145,7 +145,12 @@ func toggle_terminal() -> void:
 	is_open = !is_open
 	var target_y = target_y_open if is_open else target_y_closed
 	
+	# Reset history tracking state when toggling
+	history_index = -1
+	input_draft = ""
+	
 	if is_open:
+		# Always make it visible right before sliding down
 		terminal_panel.visible = true
 		command_input.grab_focus()
 	else:
@@ -159,10 +164,14 @@ func toggle_terminal() -> void:
 		var tween = create_tween().set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		tween.tween_property(terminal_panel, "position:y", target_y, slide_duration)
 		
+		# FORCE visibility to false the absolute millisecond the closing slide finishes
 		if not is_open:
-			command_input.release_focus()
-		history_index = -1
-		input_draft = ""
+			tween.tween_callback(func(): 
+				terminal_panel.visible = false
+				# Safety check: reset position to 0 height equivalent to prevent boundary leaks
+				if terminal_panel.position.y != target_y_closed:
+					terminal_panel.position.y = target_y_closed
+			)
 
 # --- Mouse Resizing Drag Logic ---
 func _on_resize_handle_input(event: InputEvent) -> void:
