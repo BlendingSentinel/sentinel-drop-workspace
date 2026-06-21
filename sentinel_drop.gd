@@ -22,7 +22,9 @@ var target_y_closed: float = 0.0
 var target_y_open: float = 0.0
 var terminal_height: float = 0.0
 var command_registry: Dictionary = {}
-
+var command_history: Array[String] = []
+var history_index: int = -1
+var input_draft: String = ""
 
 # Dragging states
 var is_dragging: bool = false
@@ -63,9 +65,52 @@ func _ready() -> void:
 
 func _on_input_box_gui_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
+		# 1. Handle Command Submission
 		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
 			_on_command_submitted(command_input.text)
 			command_input.accept_event()
+			return
+			
+		# 2. Cycle UP through History
+		if event.keycode == KEY_UP:
+			if command_history.is_empty():
+				command_input.accept_event()
+				return
+				
+			# If we are just starting to navigate up, save what the user currently has typed
+			if history_index == -1:
+				input_draft = command_input.text
+				
+			# Move backward in time through history array
+			if history_index < command_history.size() - 1:
+				history_index += 1
+				_apply_history_to_input()
+				
+			command_input.accept_event() # Prevent Godot from moving text caret
+			
+		# 3. Cycle DOWN through History
+		elif event.keycode == KEY_DOWN:
+			if history_index == -1:
+				command_input.accept_event()
+				return
+				
+			history_index -= 1
+			
+			if history_index == -1:
+				# We are back at the bottom, restore their original draft
+				command_input.text = input_draft
+				command_input.caret_column = command_input.text.length()
+			else:
+				_apply_history_to_input()
+				
+			command_input.accept_event() # Prevent Godot from moving text caret
+
+func _apply_history_to_input() -> void:
+	# History is stored sequentially, so the most recent item is at the back of the array
+	var target_text = command_history[(command_history.size() - 1) - history_index]
+	command_input.text = target_text
+	# Move the text cursor to the very end of the string instead of leaving it at the start
+	command_input.caret_column = target_text.length()
 
 func _on_focus_exited() -> void:
 	await get_tree().process_frame
@@ -115,7 +160,9 @@ func toggle_terminal() -> void:
 		tween.tween_property(terminal_panel, "position:y", target_y, slide_duration)
 		
 		if not is_open:
-			tween.tween_callback(func(): terminal_panel.visible = false)
+			command_input.release_focus()
+		history_index = -1
+		input_draft = ""
 
 # --- Mouse Resizing Drag Logic ---
 func _on_resize_handle_input(event: InputEvent) -> void:
@@ -135,10 +182,17 @@ func register_command(command_name: String, callable: Callable, description: Str
 
 func _on_command_submitted(text: String) -> void:
 	var trimmed = text.strip_edges()
+	
+	history_index = -1
+	input_draft = ""
+	
 	if trimmed.is_empty():
 		_force_focus_loop()
 		return
-	
+		
+	if command_history.is_empty() or command_history.back() != text:
+		command_history.append(text)
+		
 	log_text("> " + trimmed)
 	command_input.clear()
 	
