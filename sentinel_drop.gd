@@ -2,7 +2,7 @@ extends CanvasLayer
 
 # --- Exported Settings (Configurable in Inspector) ---
 @export_category("SentinelDrop Configuration")
-@export var slide_duration: float = 0.25
+@export var slide_duration: float = 0.15
 @export_range(0.1, 1.0) var default_screen_height_pct: float = 0.4
 @export var toggle_action: String = "toggle_terminal"
 
