@@ -26,14 +26,13 @@ var command_history: Array[String] = []
 var history_index: int = -1
 var input_draft: String = ""
 var is_wireframe: bool = false
-var is_noclip_active: bool = false
 
 # Dragging states
 var is_dragging: bool = false
 var max_height_pixels: float = 0.0
 
 func _ready() -> void:
-	# 1. Calculate dimensions based on screen size
+	# Determine dimensions based on screen size
 	var screen_size = get_viewport().get_visible_rect().size
 	terminal_height = screen_size.y * default_screen_height_pct
 	max_height_pixels = screen_size.y
@@ -42,12 +41,12 @@ func _ready() -> void:
 	terminal_panel.size.y = terminal_height
 	terminal_panel.size.x = screen_size.x
 	
-	# Position panel completely off-screen at start
+	# Position panel completely off screen at start
 	target_y_closed = -terminal_height
 	target_y_open = 0.0
 	terminal_panel.position.y = target_y_closed
 	
-	# 2. Connect UI signals
+	# UI connect signals
 	command_input.focus_exited.connect(_on_focus_exited)
 	command_input.gui_input.connect(_on_input_box_gui_input)
 	resize_handle.gui_input.connect(_on_resize_handle_input)
@@ -55,7 +54,7 @@ func _ready() -> void:
 	# Hide the panel on launch so the bevel is perfectly invisible
 	terminal_panel.visible = false
 	
-	# 3. Register Commands
+	# Index of valid commands
 	register_command("help", _cmd_help, "Lists all available commands.")
 	register_command("clear", _cmd_clear, "Clears the terminal screen.")
 	register_command("cls", _cmd_clear, "Alias for clear.")
@@ -67,23 +66,25 @@ func _ready() -> void:
 	register_command("wireframe", _cmd_wireframe, "Toggles wireframe overlay mode for 3D/2D debugging.")
 	register_command("engine_info", _cmd_engine_info, "Prints engine version, OS, and hardware diagnostics.")
 	register_command("shutdown", _cmd_shutdown, "Instantly closes the game client.")
-	register_command("noclip", _cmd_noclip, "Toggles noclip mode, allowing you to fly through solid objects.")
 	register_command("window_mode", _cmd_window_mode, "Changes display mode. Usage: window_mode [windowed/fullscreen/borderless]")
 	register_command("screenshot", _cmd_screenshot, "Captures the screen and saves it as a PNG.")
 	register_command("gc", _cmd_gc, "Runs a low-level memory audit and checks for orphan node leaks.")
 	register_command("ping", _cmd_ping, "Pings the current server, or a specific domain/IP. Usage: ping [optional_url]")
+	register_command("volume", _cmd_volume, "Sets bus volume. Usage: volume [bus_name] [value 0.0-1.0]")
+	register_command("timescale", _cmd_timescale, "Adjusts global game processing speed. Usage: timescale [value]")
+	register_command("aa", _cmd_aa, "Manages Anti-Aliasing profiles. Usage: aa [type] [value]")
 	
 	log_text("[color=cyan]SentinelDrop Terminal Initialized. Type 'help' for commands.[/color]")
 
 func _on_input_box_gui_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
-		# 1. Handle Command Submission
+		# Handle Command Submission
 		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
 			_on_command_submitted(command_input.text)
 			command_input.accept_event()
 			return
 			
-		# 2. Cycle UP through History
+		# Cycle UP through History
 		if event.keycode == KEY_UP:
 			if command_history.is_empty():
 				command_input.accept_event()
@@ -100,7 +101,7 @@ func _on_input_box_gui_input(event: InputEvent) -> void:
 				
 			command_input.accept_event() # Prevent Godot from moving text caret
 			
-		# 3. Cycle DOWN through History
+		# Cycle DOWN through History
 		elif event.keycode == KEY_DOWN:
 			if history_index == -1:
 				command_input.accept_event()
@@ -109,7 +110,6 @@ func _on_input_box_gui_input(event: InputEvent) -> void:
 			history_index -= 1
 			
 			if history_index == -1:
-				# We are back at the bottom, restore their original draft
 				command_input.text = input_draft
 				command_input.caret_column = command_input.text.length()
 			else:
@@ -125,7 +125,7 @@ func _apply_history_to_input() -> void:
 	command_input.caret_column = target_text.length()
 
 func _on_focus_exited() -> void:
-	#If we are already exiting the tree, don't bother awaiting
+	#If we are already exiting the tree, don't bother waiting
 	if not is_inside_tree() or get_tree() == null:
 		return
 		
@@ -159,7 +159,7 @@ func _input(event: InputEvent) -> void:
 	if is_dragging and not is_open:
 		is_dragging = false
 
-# --- Open/Close Logic ---
+# --- Open/Close ---
 func toggle_terminal() -> void:
 	if is_dragging:
 		is_dragging = false
@@ -407,12 +407,6 @@ func _cmd_shutdown(_args: Array) -> void:
 	
 	get_tree().quit()
 
-func _cmd_noclip(_args: Array) -> void:
-	is_noclip_active = !is_noclip_active
-	
-	var status = "[color=green]ENABLED[/color]" if is_noclip_active else "[color=red]DISABLED[/color]"
-	log_text("Noclip mode is now %s." % status)
-
 func _cmd_window_mode(args: Array) -> void:
 	if args.is_empty():
 		# If no argument is provided, read back the current engine state
@@ -549,3 +543,138 @@ func _cmd_ping(args: Array) -> void:
 	if err != OK:
 		log_text("[color=red]Failed to initialize network connection socket.[/color]")
 		http_request.queue_free()
+
+func _cmd_volume(args: Array) -> void:
+	if args.is_empty() or args[0] == "":
+		log_text("[color=yellow]--- SentinelDrop Audio Mixer Matrix ---[/color]")
+		
+		var bus_count = AudioServer.bus_count
+		for i in range(bus_count):
+			var bus_name = AudioServer.get_bus_name(i)
+			var current_db = AudioServer.get_bus_volume_db(i)
+			var current_pct = int(db_to_linear(current_db) * 100)
+			var is_muted = AudioServer.is_bus_mute(i)
+			var mute_status = " [color=red](MUTED)[/color]" if is_muted else ""
+			
+			log_text("  Bus [%d]: [color=cyan]%-12s[/color] Volume: [color=green]%3d%%[/color] (%.1f dB)%s" % [
+				i, bus_name, current_pct, current_db, mute_status
+			])
+		return
+		
+	if args.size() < 2:
+		log_text("[color=red]Usage: volume [bus_name] [value 0.0 - 1.0][/color]")
+		return
+
+func _cmd_timescale(args: Array) -> void:
+	if args.is_empty() or args[0] == "":
+		log_text("Current Engine Timescale: [color=yellow]%.2f[/color]" % Engine.time_scale)
+		return
+		
+	var target_scale = args[0].to_float()
+	
+	# Clamp to safe boundaries (0.0 freezes execution, anything above 5.0 can break physics steps)
+	Engine.time_scale = clamp(target_scale, 0.0, 5.0)
+	log_text("Global Engine Timescale set to: [color=green]%.2f[/color]" % Engine.time_scale)
+
+func _cmd_aa(args: Array) -> void:
+	var vp = get_viewport()
+	
+	# Helper parameter maps to turn cryptic engine integers into clean text labels
+	var get_msaa_str = func(val): 
+		match val:
+			Viewport.MSAA_DISABLED: return "Off"
+			Viewport.MSAA_2X: return "2x"
+			Viewport.MSAA_4X: return "4x"
+			Viewport.MSAA_8X: return "8x"
+			_: return "Unknown"
+			
+	var get_ssaa_str = func(val):
+		match val:
+			Viewport.SCREEN_SPACE_AA_DISABLED: return "Off"
+			Viewport.SCREEN_SPACE_AA_FXAA: return "FXAA"
+			Viewport.SCREEN_SPACE_AA_SMAA: return "SMAA"
+			_: return "Unknown"
+	
+	# ==========================================
+	# CASE 1: No arguments provided -> Show full matrix
+	# ==========================================
+	if args.is_empty() or args[0] == "":
+		log_text("[color=yellow]--- SentinelDrop Anti-Aliasing Dashboard ---[/color]")
+		log_text("  msaa2d: [color=cyan]%s[/color]" % get_msaa_str.call(vp.msaa_2d))
+		log_text("  msaa3d: [color=cyan]%s[/color]" % get_msaa_str.call(vp.msaa_3d))
+		log_text("  screen: [color=cyan]%s[/color]" % get_ssaa_str.call(vp.screen_space_aa))
+		log_text("  taa:    [color=cyan]%s[/color]" % ("Enabled" if vp.use_taa else "Disabled"))
+		log_text("Usage: [color=yellow]aa [type] [optional_value][/color] (Valid types: msaa2d, msaa3d, screen, taa)")
+		return
+	
+	var target_pipe = args[0].to_lower()
+	
+	# ==========================================
+	# CASE 2: 1 Argument -> Query specific pipeline status & options
+	# ==========================================
+	if args.size() < 2 or args[1] == "":
+		match target_pipe:
+			"msaa2d":
+				log_text("Current MSAA 2D setting: [color=cyan]%s[/color]" % get_msaa_str.call(vp.msaa_2d))
+				log_text("Valid argument values: [color=yellow]off, 2x, 4x, 8x[/color]")
+			"msaa3d":
+				log_text("Current MSAA 3D setting: [color=cyan]%s[/color]" % get_msaa_str.call(vp.msaa_3d))
+				log_text("Valid argument values: [color=yellow]off, 2x, 4x, 8x[/color]")
+			"screen":
+				log_text("Current Screen Space AA setting: [color=cyan]%s[/color]" % get_ssaa_str.call(vp.screen_space_aa))
+				log_text("Valid argument values: [color=yellow]off, fxaa, smaa[/color]")
+			"taa":
+				log_text("Current TAA setting: [color=cyan]%s[/color]" % ("Enabled" if vp.use_taa else "Disabled"))
+				log_text("Valid argument values: [color=yellow]on, off[/color]")
+			_:
+				log_text("[color=red]Unknown pipeline. Use 'msaa2d', 'msaa3d', 'screen', or 'taa'.[/color]")
+		return
+	
+	# ==========================================
+	# CASE 3: 2 Arguments -> Actively write values
+	# ==========================================
+	var write_val = args[1].to_lower()
+	match target_pipe:
+		"msaa2d", "msaa3d":
+			var target_enum = Viewport.MSAA_DISABLED
+			match write_val:
+				"off", "disabled": target_enum = Viewport.MSAA_DISABLED
+				"2x": target_enum = Viewport.MSAA_2X
+				"4x": target_enum = Viewport.MSAA_4X
+				"8x": target_enum = Viewport.MSAA_8X
+				_:
+					log_text("[color=red]Invalid value. Valid inputs: off, 2x, 4x, 8x[/color]")
+					return
+					
+			if target_pipe == "msaa2d":
+				vp.msaa_2d = target_enum
+				log_text("MSAA 2D pipeline updated to: [color=green]%s[/color]" % get_msaa_str.call(vp.msaa_2d))
+			else:
+				vp.msaa_3d = target_enum
+				log_text("MSAA 3D pipeline updated to: [color=green]%s[/color]" % get_msaa_str.call(vp.msaa_3d))
+
+		"screen":
+			var target_enum = Viewport.SCREEN_SPACE_AA_DISABLED
+			match write_val:
+				"off", "disabled": target_enum = Viewport.SCREEN_SPACE_AA_DISABLED
+				"fxaa": target_enum = Viewport.SCREEN_SPACE_AA_FXAA
+				"smaa": target_enum = Viewport.SCREEN_SPACE_AA_SMAA
+				_:
+					log_text("[color=red]Invalid value. Valid inputs: off, fxaa, smaa[/color]")
+					return
+			vp.screen_space_aa = target_enum
+			log_text("Screen Space AA pipeline updated to: [color=green]%s[/color]" % get_ssaa_str.call(vp.screen_space_aa))
+	
+		"taa":
+			match write_val:
+				"on", "enabled", "true":
+					vp.use_taa = true
+				"off", "disabled", "false":
+					vp.use_taa = false
+				_:
+					log_text("[color=red]Invalid value. Valid inputs: on, off[/color]")
+					return
+			log_text("TAA pipeline updated to: [color=green]%s[/color]" % ("Enabled" if vp.use_taa else "Disabled"))
+			
+		_:
+			log_text("[color=red]Unknown pipeline string. Use 'msaa2d', 'msaa3d', 'screen', or 'taa'.[/color]")
