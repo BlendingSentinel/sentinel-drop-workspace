@@ -20,7 +20,9 @@ This repository is hosted as a complete Godot 4 project. Clone the repo and open
 To implement SentinelDrop into your own game:
 1. Copy the contents of the `addons/sentinel_drop/` directory into your project's `addons/` folder.
 2. Go to **Project -> Project Settings -> Plugins** and check **Enable** next to SentinelDrop.
-3. Run your game and press the **`~` (Tilde)** key to open the console!
+3. In the AutoLoad tab in the **Project Settings** window, load the path **sentinel_drop/sentinel_drop.tscn**, set the node name SentinelDrop and clock **Add**.
+4. In the **Input Map** section of the **Project Settings**, add an input called "toggle_terminal" and set the **`~` (Tilde)** key as the input for the "toggle_terminal" input command.
+5. Run your game and press the **`~` (Tilde)** key to open the console!
 
 ## The Command Index
 
