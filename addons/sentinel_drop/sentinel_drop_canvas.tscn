@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://bfi6xyupdapeo"]
 
-[ext_resource type="Script" uid="uid://bq75hppv1uqvn" path="res://sentinel_drop.gd" id="1_780ti"]
+[ext_resource type="Script" uid="uid://bq75hppv1uqvn" path="res://addons/sentinel_drop/sentinel_drop.gd" id="1_780ti"]
 
 [node name="SentinelDropCanvas" type="CanvasLayer" unique_id=382247076]
 layer = 100
